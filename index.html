@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voxel Pagoda Garden</title>
+  <style>
+    :root {
+      color-scheme: only light;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: radial-gradient(ellipse at top, #b3d2ff 0%, #eaf6ff 60%, #ffffff 100%);
+      color: #1c1c1c;
+      overflow: hidden;
+    }
+    header {
+      position: absolute;
+      top: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.85);
+      padding: 0.75rem 1.5rem;
+      border-radius: 999px;
+      box-shadow: 0 15px 45px rgba(50, 110, 220, 0.15);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      text-align: center;
+      z-index: 10;
+      pointer-events: none;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.1rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #3e5ad3;
+    }
+    #scene {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    footer {
+      position: absolute;
+      bottom: 1rem;
+      right: 1rem;
+      padding: 0.6rem 1.2rem;
+      border-radius: 0.75rem;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      box-shadow: 0 12px 30px rgba(60, 60, 90, 0.18);
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #5870ff;
+      pointer-events: none;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Voxel Pagoda Garden</h1>
+  </header>
+  <canvas id="scene"></canvas>
+  <footer>Drag to orbit · Scroll to zoom</footer>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const canvas = document.getElementById("scene");
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xbfd8ff);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
+    camera.position.set(60, 50, 120);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.48);
+    scene.add(ambientLight);
+
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.05);
+    sunLight.position.set(80, 120, 40);
+    sunLight.castShadow = true;
+    sunLight.shadow.camera.near = 1;
+    sunLight.shadow.camera.far = 300;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    scene.add(sunLight);
+
+    const sunHelper = new THREE.DirectionalLightHelper(sunLight, 5);
+    sunHelper.visible = false;
+    scene.add(sunHelper);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 12, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.maxPolarAngle = Math.PI * 0.49;
+    controls.minDistance = 30;
+    controls.maxDistance = 220;
+
+    const voxelSize = 1;
+    const voxelHalf = voxelSize / 2;
+    const color = new THREE.Color();
+
+    const instancedMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize),
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.05 }),
+      15000
+    );
+    instancedMesh.castShadow = true;
+    instancedMesh.receiveShadow = true;
+    instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    instancedMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(instancedMesh.count * 3), 3);
+
+    const dummy = new THREE.Object3D();
+    let instanceIndex = 0;
+
+    function addVoxel(position, hexColor, scale = 1) {
+      if (instanceIndex >= instancedMesh.count) return;
+      dummy.position.set(
+        position[0] * voxelSize,
+        position[1] * voxelSize,
+        position[2] * voxelSize
+      );
+      dummy.scale.set(scale, scale, scale);
+      dummy.updateMatrix();
+      instancedMesh.setMatrixAt(instanceIndex, dummy.matrix);
+      color.setHex(hexColor);
+      instancedMesh.instanceColor.setXYZ(instanceIndex, color.r, color.g, color.b);
+      instanceIndex += 1;
+    }
+
+    function addPlateau(width, depth, height, baseY, palette) {
+      for (let x = -width; x <= width; x++) {
+        for (let z = -depth; z <= depth; z++) {
+          const y = baseY + Math.round(Math.sin(x * 0.35) * Math.cos(z * 0.27) * height * 0.6);
+          const colorHex = palette[(Math.abs(x * 23 + z * 17 + y * 11) % palette.length)];
+          addVoxel([x, y, z], colorHex);
+        }
+      }
+    }
+
+    function addPath(rect, palette) {
+      const [minX, maxX, y, minZ, maxZ] = rect;
+      for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          const wobble = Math.round(Math.sin((x + z) * 0.3) * 0.6);
+          const colorHex = palette[(Math.abs(x * 31 + z * 13) % palette.length)];
+          addVoxel([x, y + wobble, z], colorHex);
+        }
+      }
+    }
+
+    function addPagoda(levels = 5) {
+      const basePalette = [0x2f1f18, 0x3b2720, 0x462f25];
+      const roofPalette = [0xc93f3f, 0xd14d4d, 0xe36b6b, 0xba3434];
+      const accentPalette = [0xf5d587, 0xf7e3a2, 0xc9973c];
+      const lanternPalette = [0xf8f3d4, 0xfbeac2, 0xf2dd98];
+
+      const stairWidth = 6;
+      for (let i = -stairWidth; i <= stairWidth; i++) {
+        for (let j = 0; j < 5; j++) {
+          const stairY = j;
+          const stairColor = 0x5e4a3d;
+          addVoxel([i, stairY, -12 + j], stairColor);
+        }
+      }
+
+      const baseHeight = 3;
+      for (let x = -10; x <= 10; x++) {
+        for (let z = -10; z <= 10; z++) {
+          const dist = Math.sqrt(x * x + z * z);
+          if (dist <= 11) {
+            const colorHex = basePalette[(Math.abs(x * 19 + z * 13) % basePalette.length)];
+            for (let y = 0; y < baseHeight; y++) {
+              addVoxel([x, y + 5, z], colorHex);
+            }
+          }
+        }
+      }
+
+      for (let x = -2; x <= 2; x++) {
+        for (let y = 0; y < 10; y++) {
+          addVoxel([x, y + 5, -10], 0x694d37);
+          addVoxel([x, y + 5, 10], 0x694d37);
+        }
+      }
+      for (let z = -2; z <= 2; z++) {
+        for (let y = 0; y < 10; y++) {
+          addVoxel([-10, y + 5, z], 0x694d37);
+          addVoxel([10, y + 5, z], 0x694d37);
+        }
+      }
+
+      const lanternOffsets = [
+        [-8, 7, -8],
+        [8, 7, -8],
+        [-8, 7, 8],
+        [8, 7, 8]
+      ];
+      lanternOffsets.forEach(([x, y, z]) => {
+        for (let h = 0; h < 4; h++) {
+          addVoxel([x, y + h, z], lanternPalette[h % lanternPalette.length]);
+        }
+        addVoxel([x, y + 4, z], 0x3e2b1f);
+      });
+
+      let currentY = 8;
+      let levelWidth = 8;
+      for (let level = 0; level < levels; level++) {
+        for (let x = -levelWidth; x <= levelWidth; x++) {
+          for (let z = -levelWidth; z <= levelWidth; z++) {
+            const edge = Math.max(Math.abs(x), Math.abs(z));
+            if (edge <= levelWidth - (level % 2) && edge >= levelWidth - 2) {
+              const roofColor = roofPalette[(Math.abs(x * 13 + z * 7 + level) % roofPalette.length)];
+              addVoxel([x, currentY + 4, z], roofColor);
+              if (edge === levelWidth - 0) {
+                addVoxel([x, currentY + 5, z], roofColor);
+              }
+            }
+          }
+        }
+
+        for (let x = -levelWidth + 1; x <= levelWidth - 1; x++) {
+          for (let z = -levelWidth + 1; z <= levelWidth - 1; z++) {
+            const colorHex = accentPalette[(Math.abs(x * 29 + z * 17 + level * 7) % accentPalette.length)];
+            for (let y = 0; y < 4; y++) {
+              if (level === 0 || y > 0) {
+                addVoxel([x, currentY + y, z], colorHex);
+              }
+            }
+          }
+        }
+
+        addVoxel([0, currentY + 6, 0], 0xdcd2ad);
+        addVoxel([0, currentY + 7, 0], 0xc7b37f);
+        addVoxel([0, currentY + 8, 0], 0xa88858);
+
+        currentY += 5;
+        levelWidth -= 1.8;
+      }
+
+      for (let i = 0; i < 24; i++) {
+        const angle = (i / 24) * Math.PI * 2;
+        const radius = 12 + Math.sin(i * 0.7) * 2;
+        const x = Math.round(Math.cos(angle) * radius);
+        const z = Math.round(Math.sin(angle) * radius);
+        for (let h = -1; h <= 4; h++) {
+          const colorHex = roofPalette[(i + h + 5) % roofPalette.length];
+          addVoxel([x, 10 + h, z], colorHex);
+        }
+      }
+    }
+
+    function addCherryTree(center, height = 16) {
+      const trunkPalette = [0x4c3224, 0x5d3a29, 0x6b4330];
+      const blossomPalette = [
+        0xf5c5d5,
+        0xf9d5e1,
+        0xfccfe8,
+        0xe891be,
+        0xf5a8c6,
+        0xf8d5ef
+      ];
+      const leafPalette = [0x8dd58b, 0x73c47f, 0x9ee8a0];
+
+      for (let y = 0; y < height; y++) {
+        const colorHex = trunkPalette[y % trunkPalette.length];
+        addVoxel([center[0], center[1] + y, center[2]], colorHex);
+        if (y > height * 0.5 && y % 3 === 0) {
+          addVoxel([center[0] + 1, center[1] + y, center[2]], colorHex);
+          addVoxel([center[0] - 1, center[1] + y, center[2]], colorHex);
+        }
+      }
+
+      const radius = 6;
+      for (let x = -radius; x <= radius; x++) {
+        for (let y = -radius; y <= radius; y++) {
+          for (let z = -radius; z <= radius; z++) {
+            const dist = Math.sqrt(x * x * 1.1 + y * y * 0.8 + z * z);
+            if (dist <= radius) {
+              const isBlossom = dist > radius * 0.55 || Math.random() > 0.35;
+              const palette = isBlossom ? blossomPalette : leafPalette;
+              const colorHex = palette[(Math.abs(x * 17 + y * 13 + z * 23) % palette.length)];
+              const scatter = Math.random() > 0.92 ? 1 : 0;
+              addVoxel(
+                [center[0] + x, center[1] + height - 4 + y + scatter, center[2] + z],
+                colorHex
+              );
+            }
+          }
+        }
+      }
+
+      for (let i = 0; i < 25; i++) {
+        const angle = (i / 25) * Math.PI * 2;
+        const distance = radius + 2 + Math.random() * 2;
+        const x = Math.round(Math.cos(angle) * distance);
+        const z = Math.round(Math.sin(angle) * distance);
+        const y = Math.round(Math.sin(angle * 1.7) * 3);
+        const colorHex = blossomPalette[i % blossomPalette.length];
+        addVoxel([center[0] + x, center[1] + 2 + y, center[2] + z], colorHex);
+      }
+    }
+
+    function addPond(rect) {
+      const [minX, maxX, baseY, minZ, maxZ] = rect;
+      const waterPalette = [0x8ec9f3, 0x7abef0, 0x6bb0e7, 0x9ad8ff];
+      for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          const depth = Math.round(Math.sin(x * 0.4) * Math.cos(z * 0.37) * 1.5);
+          const y = baseY + depth;
+          const colorHex = waterPalette[(Math.abs(x * 11 + z * 19) % waterPalette.length)];
+          addVoxel([x, y, z], colorHex);
+          if (Math.random() > 0.92) {
+            addVoxel([x, y + 1, z], 0xffffff);
+          }
+        }
+      }
+    }
+
+    function addBridge(center, length = 12) {
+      const palette = [0x7a4833, 0x8a533b, 0x9c5f44, 0xb37453];
+      for (let i = -length; i <= length; i++) {
+        const yOffset = Math.round(Math.sin((i / length) * Math.PI) * 3);
+        for (let w = -2; w <= 2; w++) {
+          const colorHex = palette[(Math.abs(i * 13 + w * 7) % palette.length)];
+          addVoxel([center[0] + i, center[1] + yOffset, center[2] + w], colorHex);
+        }
+        addVoxel([center[0] + i, center[1] + yOffset + 2, center[2] + 3], 0xf5d587);
+        addVoxel([center[0] + i, center[1] + yOffset + 2, center[2] - 3], 0xf5d587);
+      }
+    }
+
+    function addLanternRing(radius) {
+      const lanternPalette = [0xf8f3d4, 0xfbeac2, 0xeedca5, 0xf8f1bb];
+      const postPalette = [0x473025, 0x5b3c2e];
+      for (let i = 0; i < 16; i++) {
+        const angle = (i / 16) * Math.PI * 2;
+        const x = Math.round(Math.cos(angle) * radius);
+        const z = Math.round(Math.sin(angle) * radius);
+        for (let h = 0; h < 4; h++) {
+          const colorHex = postPalette[h % postPalette.length];
+          addVoxel([x, 6 + h, z], colorHex);
+        }
+        for (let h = 0; h < 3; h++) {
+          const colorHex = lanternPalette[(i + h) % lanternPalette.length];
+          addVoxel([x, 10 + h, z], colorHex);
+        }
+        addVoxel([x, 13, z], 0x342219);
+      }
+    }
+
+    function addShrubbery(area) {
+      const [minX, maxX, baseY, minZ, maxZ] = area;
+      const shrubPalette = [0x2f7d4b, 0x3f8d55, 0x4fa865, 0x62bf7b];
+      for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          if (Math.random() > 0.7) {
+            const height = 1 + Math.floor(Math.random() * 3);
+            for (let h = 0; h < height; h++) {
+              const colorHex = shrubPalette[(Math.abs(x * 17 + z * 23 + h * 7) % shrubPalette.length)];
+              addVoxel([x, baseY + h, z], colorHex);
+            }
+          }
+        }
+      }
+    }
+
+    function scatterFlowers(area) {
+      const [minX, maxX, baseY, minZ, maxZ] = area;
+      const petals = [0xf0d9ff, 0xfecdd3, 0xf9f871, 0xffd6a5, 0x9bf6ff];
+      for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          if (Math.random() > 0.9) {
+            const y = baseY + Math.round(Math.sin(x * 0.3 + z * 0.4));
+            addVoxel([x, y, z], petals[(x * 11 + z * 13) % petals.length]);
+          }
+        }
+      }
+    }
+
+    function addBambooGroves(area, count = 80) {
+      const [minX, maxX, baseY, minZ, maxZ] = area;
+      const stalkPalette = [0x9ed67a, 0x8cc769, 0x7fbb5f];
+      const leafPalette = [0x7cbf5a, 0x6bab4a, 0x5d9b3d];
+      for (let i = 0; i < count; i++) {
+        const x = Math.floor(THREE.MathUtils.randFloat(minX, maxX));
+        const z = Math.floor(THREE.MathUtils.randFloat(minZ, maxZ));
+        const height = 8 + Math.floor(Math.random() * 6);
+        for (let h = 0; h < height; h++) {
+          const colorHex = stalkPalette[h % stalkPalette.length];
+          addVoxel([x, baseY + h, z], colorHex);
+          if (h > height * 0.4 && Math.random() > 0.75) {
+            addVoxel([x + 1, baseY + h, z], colorHex);
+          }
+        }
+        for (let lx = -2; lx <= 2; lx++) {
+          for (let lz = -2; lz <= 2; lz++) {
+            if (Math.random() > 0.55) {
+              const colorHex = leafPalette[(Math.abs(lx * 7 + lz * 11) % leafPalette.length)];
+              addVoxel([x + lx, baseY + height + Math.round(Math.random() * 2), z + lz], colorHex);
+            }
+          }
+        }
+      }
+    }
+
+    function addFloatingLanterns(area, count = 12) {
+      const [minX, maxX, baseY, minZ, maxZ] = area;
+      const palette = [0xfff6da, 0xffe7a5, 0xfff2c4, 0xfbd77b];
+      for (let i = 0; i < count; i++) {
+        const x = Math.floor(THREE.MathUtils.randFloat(minX, maxX));
+        const z = Math.floor(THREE.MathUtils.randFloat(minZ, maxZ));
+        const driftY = baseY + 1 + Math.round(Math.sin(i * 0.6) * 2);
+        for (let h = 0; h < 3; h++) {
+          const colorHex = palette[(i + h) % palette.length];
+          addVoxel([x, driftY + h, z], colorHex);
+        }
+        addVoxel([x, driftY + 3, z], 0x8a5a32);
+      }
+    }
+
+    function addStoneLanterns(area, count = 14) {
+      const [minX, maxX, baseY, minZ, maxZ] = area;
+      const palette = [0xd6d3ce, 0xc2beb9, 0xb5b0a8];
+      for (let i = 0; i < count; i++) {
+        const x = Math.floor(THREE.MathUtils.randFloat(minX, maxX));
+        const z = Math.floor(THREE.MathUtils.randFloat(minZ, maxZ));
+        for (let h = 0; h < 3; h++) {
+          const colorHex = palette[(i + h) % palette.length];
+          addVoxel([x, baseY + h, z], colorHex);
+        }
+        addVoxel([x, baseY + 3, z], 0xf2dfbe);
+      }
+    }
+
+    addPlateau(48, 48, 6, -2, [0x75c46a, 0x82d173, 0x6fb764, 0x9bd989]);
+    addPath([-15, 15, 4, -14, 14], [0xb5a38a, 0xc2b097, 0xd1bea4, 0xa19079]);
+    addPagoda(5);
+    addLanternRing(18);
+    addPond([-30, -8, 2, -8, 18]);
+    addBridge([-9, 4, 5], 10);
+    addFloatingLanterns([-29, -9, 4, -7, 17], 16);
+    addStoneLanterns([-24, 24, 4, -24, 24], 18);
+    addShrubbery([-40, -14, 4, -35, 22]);
+    addShrubbery([14, 40, 4, -40, 22]);
+    addShrubbery([-12, 12, 4, 18, 40]);
+    addBambooGroves([-42, -24, 4, -30, 30], 60);
+    addBambooGroves([24, 40, 4, -30, 30], 60);
+
+    addCherryTree([-26, 4, -6], 20);
+    addCherryTree([26, 4, 6], 18);
+    addCherryTree([20, 4, -18], 17);
+    addCherryTree([-14, 4, 22], 16);
+    addCherryTree([4, 4, -24], 15);
+
+    instancedMesh.count = instanceIndex;
+    instancedMesh.instanceColor.needsUpdate = true;
+    instancedMesh.instanceMatrix.needsUpdate = true;
+    scene.add(instancedMesh);
+
+    const groundGeometry = new THREE.CircleGeometry(140, 80);
+    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xdbf2d3, roughness: 0.9, metalness: 0.05 });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 3;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
